@@ -1,0 +1,165 @@
+# app/routes.py
+from flask import Blueprint, jsonify, request, current_app, abort
+from pathlib import Path
+import traceback
+
+from .files import (
+    list_types, list_elements_for_type, list_files_for, read_timeseries,
+    map_element_to_types, search_elements, group_heating_cooling_pairs
+)
+
+main = Blueprint("main", __name__)
+
+@main.route("/")
+def index():
+    return "Welcome to the Flask API"
+
+@main.route("/api/hello")
+def hello():
+    return jsonify({"message": "Hello from Flask!"})
+
+# Optional: legacy items route (can remove if unused)
+# @main.route("/api/items")
+# def get_items():
+#     return jsonify({"items": [], "page": 1, "per_page": 10, "total": 0})
+
+@main.route("/api/datatypes")
+def get_datatypes():
+    root = Path(current_app.config["DATA_ROOT"]).resolve()
+    if not root.exists():
+        return jsonify({"types": []})
+    return jsonify({"types": list_types(root)})
+
+@main.route("/api/elements")
+def get_elements():
+    dtype = request.args.get("type")
+    if not dtype:
+        abort(400, "Missing ?type=")
+    root = Path(current_app.config["DATA_ROOT"]).resolve()
+    return jsonify({"type": dtype, "elements": list_elements_for_type(root, dtype)})
+
+@main.route("/api/series")
+def get_series():
+    dtype = request.args.get("type")
+    element = request.args.get("element")
+    if not dtype or not element:
+        abort(400, "Missing ?type= and/or ?element=")
+
+    root = Path(current_app.config["DATA_ROOT"]).resolve()
+    pairs = group_heating_cooling_pairs(root, dtype, element)
+
+    out = []
+    for concentration, file_pair in pairs.items():
+        pair_info = {
+            "concentration": concentration,
+            "heating_file": file_pair["heating"].name if "heating" in file_pair else None,
+            "cooling_file": file_pair["cooling"].name if "cooling" in file_pair else None,
+            "has_both": "heating" in file_pair and "cooling" in file_pair
+        }
+
+        # Preview data from one of the files to get y_label
+        if "heating" in file_pair:
+            try:
+                ylabel, sample_rows = read_timeseries(file_pair["heating"])
+                pair_info["y_label"] = ylabel
+                pair_info["sample_points"] = len(sample_rows)
+            except Exception as e:
+                pair_info["error"] = str(e)
+        elif "cooling" in file_pair:
+            try:
+                ylabel, sample_rows = read_timeseries(file_pair["cooling"])
+                pair_info["y_label"] = ylabel
+                pair_info["sample_points"] = len(sample_rows)
+            except Exception as e:
+                pair_info["error"] = str(e)
+
+        out.append(pair_info)
+
+    return jsonify({"type": dtype, "element": element, "series": out})
+
+@main.route("/api/search_dopants")
+def search_dopants():
+    q = (request.args.get("q") or "").strip()
+    root = Path(current_app.config["DATA_ROOT"]).resolve()
+    try:
+        if not root.exists():
+            return jsonify({"error": f"DATA_ROOT does not exist: {root}"}), 500
+
+        match_map = search_elements(root, q)  # element -> { dtype -> [paths] }
+
+        results = []
+        for element, typed in sorted(match_map.items(), key=lambda kv: kv[0].lower()):
+            types_list = [
+                {"type": dtype, "file_count": len(files)}
+                for dtype, files in sorted(typed.items(), key=lambda kv: kv[0].lower())
+            ]
+            results.append({"element": element, "types": types_list})
+
+        return jsonify(results)
+
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "Failed to scan data folders."}), 500
+
+@main.route("/api/chart_data")
+def get_chart_data():
+    dtype = request.args.get("type")
+    element = request.args.get("element")
+    concentration = request.args.get("concentration")
+
+    if not dtype or not element or not concentration:
+        abort(400, "Missing ?type=, ?element=, and/or ?concentration=")
+
+    root = Path(current_app.config["DATA_ROOT"]).resolve()
+    try:
+        pairs = group_heating_cooling_pairs(root, dtype, element)
+
+        if concentration not in pairs:
+            return jsonify({"error": f"No data found for {element} at {concentration}% concentration"}), 404
+
+        pair_data = pairs[concentration]
+        chart_data = {"concentration": concentration, "element": element, "type": dtype, "curves": []}
+
+        # Get the appropriate y-axis label
+        y_label = "Resistance" if "resistance" in dtype else "Transmittance"
+        chart_data["y_label"] = y_label
+
+        # Read heating data
+        if "heating" in pair_data:
+            try:
+                _, heating_points = read_timeseries(pair_data["heating"])
+                chart_data["curves"].append({
+                    "label": "Heating",
+                    "type": "heating",
+                    "color": "#ef4444",  # red
+                    "data": heating_points
+                })
+            except Exception as e:
+                chart_data["curves"].append({
+                    "label": "Heating",
+                    "type": "heating",
+                    "error": str(e)
+                })
+
+        # Read cooling data
+        if "cooling" in pair_data:
+            try:
+                _, cooling_points = read_timeseries(pair_data["cooling"])
+                chart_data["curves"].append({
+                    "label": "Cooling",
+                    "type": "cooling",
+                    "color": "#3b82f6",  # blue
+                    "data": cooling_points
+                })
+            except Exception as e:
+                chart_data["curves"].append({
+                    "label": "Cooling",
+                    "type": "cooling",
+                    "error": str(e)
+                })
+
+        return jsonify(chart_data)
+
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "Failed to load chart data."}), 500
