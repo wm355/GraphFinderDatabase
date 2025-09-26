@@ -13,10 +13,9 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     # 👇 Point this to your actual folder that contains the type/element subfolders
-    app.config["DATA_ROOT"] = os.getenv(
-        "DATA_ROOT",
-        r"C:\Users\willi\DatabaseProject\flask-backend\input"  # <-- adjust to your real root
-    )
+    # Use relative path for production deployment
+    default_data_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "input")
+    app.config["DATA_ROOT"] = os.getenv("DATA_ROOT", default_data_root)
 
     db.init_app(app)
     # Allow GitHub Pages and localhost for development
