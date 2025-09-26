@@ -19,13 +19,11 @@ def create_app():
     )
 
     db.init_app(app)
-    # Allow your custom domain and localhost for development
+    # Allow GitHub Pages and localhost for development
     cors_origins = [
         "http://localhost:5173",
         "http://localhost:8080",
-        "https://wm355.github.io",
-        "https://graphfinder.com",
-        "https://www.graphfinder.com"
+        "https://wm355.github.io"
     ]
     CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
