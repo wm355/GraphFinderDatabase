@@ -5,7 +5,8 @@ import HelloWorld from './components/HelloWorld.vue'
 import { onMounted } from 'vue'
 
 onMounted(async () => {
-  const res = await fetch('/api/hello')
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
+  const res = await fetch(`${apiBaseUrl}/hello`)
   const data = await res.json()
   console.log(data.message)  // should log: "Hello from Flask!"
 })

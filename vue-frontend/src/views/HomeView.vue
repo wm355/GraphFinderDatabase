@@ -113,7 +113,9 @@
 <script>
 import axios from "axios";
 import TemperatureChart from '../components/TemperatureChart.vue';
-const api = axios.create({ baseURL: "/api" });
+const api = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || "/api"
+});
 
 export default {
   components: {
@@ -269,6 +271,6 @@ input { padding: 12px; width:700px; -webkit-text-fill-color: rgb(0, 0, 0); borde
 button { background-color:#26a69a; padding: 12px 20px; -webkit-text-fill-color: whitesmoke; border-radius: 10px; border: none; cursor: pointer; }
 .databox { height:auto; width: 1000px; display: flex; justify-content: center; flex-direction: row; align-items: flex-start; gap: 20px; margin: 20px auto 40px; }
 .datadisplaybox { width: 1000px; display: flex; flex-direction: column; align-items: stretch; }
-.datatitlepanel { min-height:150px; background-color: #2D2F35; border-radius: 25px; width: 100%; color: whitesmoke; margin-bottom:10px; padding: 15px 30px; }
+.datatitlepanel { min-height:100px; background-color: #2D2F35; border-radius: 25px; width: 100%; color: whitesmoke; margin-bottom:10px; padding: 15px 30px; }
 .datapanel { min-height: 200px; background-color: #2D2F35; border-radius: 25px; width: 100%; color: whitesmoke; padding: 16px 0 32px; padding: 15px 30px; }
 </style>
