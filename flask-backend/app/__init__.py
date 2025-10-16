@@ -14,9 +14,19 @@ def create_app():
 
     # 👇 Point this to your actual folder that contains the type/element subfolders
     # Use relative path for production deployment
-    default_data_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "input")
-    app.config["DATA_ROOT"] = os.getenv("DATA_ROOT", default_data_root)
+    # default_data_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "input")
+    # app.config["DATA_ROOT"] = os.getenv("DATA_ROOT", default_data_root)
 
+    
+    here = os.path.dirname(__file__)
+    default_upload_root = os.path.abspath(os.path.join(here, "..", "input", "dopants"))
+    app.config.setdefault("UPLOAD_ROOT", default_upload_root)
+
+    os.makedirs(app.config["UPLOAD_ROOT"], exist_ok=True)
+
+
+
+    
     db.init_app(app)
     # Allow GitHub Pages and localhost for development
     cors_origins = [
