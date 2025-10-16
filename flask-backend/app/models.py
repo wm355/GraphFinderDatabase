@@ -18,6 +18,7 @@ class Upload(db.Model):
     dopant = db.Column(db.String(64), nullable=False)
     role = db.Column(db.String(16))              # "heating" | "cooling" | ""
     group_key = db.Column(db.String(255))
+    data_type = db.Column(db.String(64))  
     filename = db.Column(db.String(255), nullable=False)
     filepath = db.Column(db.String(512), nullable=False)
     uploaded_at = db.Column(db.DateTime, server_default=db.func.now())
