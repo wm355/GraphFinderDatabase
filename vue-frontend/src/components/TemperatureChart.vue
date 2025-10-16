@@ -232,7 +232,7 @@ export default {
                 }
               },
               ticks: {
-                color: '#ffffff'    //by Cha
+                color: '#ffffff',   //by Cha
                 callback: (value) => {  // value here is the tick value (number). Show only 1, 10, 100, ...
                   const log10 = Math.log10(value);
                   return Number.isInteger(log10) ? `10^${log10}` : '';
