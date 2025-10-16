@@ -22,6 +22,7 @@
           ref="csvInput"
           type="file"
           accept=".csv"
+          multiple
           @change="handleCsvUpload"
           style="display:none"
         />
@@ -211,60 +212,47 @@ export default {
       this.$refs.csvInput?.click();
     },
 
-    handleCsvUpload(e) {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      this.uploading = true;
-      this.uploadHint = "";
-
-      Papa.parse(file, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true,
-        complete: ({ data }) => {
-          try {
-            const datasets = this.normalizeCsvToDatasets(data);
-
-            const item = {
-              id: `csv:${Date.now()}`,
-              source: 'csv',
-              isUpload: true,
-              title: `CSV: ${file.name}`,
-              y_label: 'Value',
-              datasets
-            };
-            // newest on top
-            this.uploads.unshift(item);
-
-            // show immediately in chart
-            this.selectUpload(item);
-          } catch (err) {
-            this.error = err?.message || String(err);
-          } finally {
-            this.uploading = false;
-            this.uploadHint = this.uploadHint || 'Upload complete.';
-            e.target.value = ''; // allow re-upload of same file
-          }
-        },
-        error: (err) => {
-          this.uploading = false;
-          this.error = `CSV parse error: ${err.message || err}`;
-          e.target.value = '';
-        }
+    // --- NEW: helpers for pairing/grouping ---
+    detectRoleFromName(name) {
+      const n = (name || "").toLowerCase();
+      if (/(^|[_\-\s])(heating|heat)([_\-\s]|\.|$)/.test(n)) return "heating";
+      if (/(^|[_\-\s])(cooling|cool)([_\-\s]|\.|$)/.test(n)) return "cooling";
+      return null;
+    },
+    groupKeyFromName(name) {
+      return (name || "")
+        .toLowerCase()
+        .replace(/\.(csv)$/, "")
+        .replace(/[_\-\s]?(heating|heat|cooling|cool)\b/g, "")
+        .replace(/[_\-\s]+$/, "")
+        .trim();
+    },
+    roleColor(role) {
+      return role === "heating" ? "#ef4444" : "#3b82f6"; // red / blue
+    },
+    parseCsvFile(file) {
+      return new Promise((resolve, reject) => {
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          complete: ({ data }) => resolve({ file, rows: data }),
+          error: (err) => reject(err)
+        });
       });
     },
 
-    normalizeCsvToDatasets(rows) {
+    // UPDATED: accepts role/color for nicer labels + colors
+    normalizeCsvToDatasets(rows, { role = null, color = null } = {}) {
       if (!rows?.length) throw new Error('CSV has no data rows.');
 
       const keys = Object.keys(rows[0] || {});
-      const xKey = keys.find(k => ['temperature','temp','t','x'].includes(k.toLowerCase()));
+      const xKey = keys.find(k => ['temperature','temp','t','x'].includes(String(k).toLowerCase()));
       if (!xKey) throw new Error('CSV must contain a Temperature / Temp / T / X column.');
 
       const yCols = keys.filter(k => k !== xKey);
       if (!yCols.length) throw new Error('CSV must contain at least one Y series column.');
 
-      // Return Chart.js datasets; skip y<=0 for logarithmic scale
       return yCols.map(col => {
         const data = rows.map(r => {
           const x = Number(r[xKey]);
@@ -273,13 +261,90 @@ export default {
           return { x, y };
         }).filter(Boolean);
 
+        const labelPrefix = role ? (role === 'heating' ? 'Heating — ' : 'Cooling — ') : '';
+        const borderColor = color || (role ? this.roleColor(role) : undefined);
+
         return {
-          label: col,
+          label: labelPrefix + col,
           data,
           borderWidth: 2,
-          fill: false
+          fill: false,
+          ...(borderColor ? {
+            borderColor,
+            backgroundColor: borderColor + '20'
+          } : {})
         };
       });
+    },
+
+    // UPDATED: supports multiple files + groups heating/cooling together
+    async handleCsvUpload(e) {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+
+      this.uploading = true;
+      this.uploadHint = "";
+      this.error = "";
+
+      try {
+        // Parse all files
+        const parsed = await Promise.all(files.map(this.parseCsvFile));
+
+        // Group by base key (filename minus heating/cooling + ext)
+        const byGroup = new Map(); // key -> { items: [{file, rows, role}] }
+        for (const { file, rows } of parsed) {
+          const role = this.detectRoleFromName(file.name);
+          const key  = this.groupKeyFromName(file.name) || file.name.toLowerCase().replace(/\.(csv)$/,'');
+          if (!byGroup.has(key)) byGroup.set(key, { items: [] });
+          byGroup.get(key).items.push({ file, rows, role });
+        }
+
+        const created = [];
+        for (const [key, group] of byGroup.entries()) {
+          // optional aesthetics
+          group.items.sort((a,b) => (a.role === 'heating' ? -1 : 1));
+
+          const datasets = group.items.flatMap(({ rows, role }) => {
+            const color = role ? this.roleColor(role) : undefined;
+            return this.normalizeCsvToDatasets(rows, { role, color });
+          });
+
+          if (!datasets.length) continue;
+
+          const hasHeating = group.items.some(i => i.role === 'heating');
+          const hasCooling = group.items.some(i => i.role === 'cooling');
+          const roleBadge = hasHeating && hasCooling ? " (Heating + Cooling)" :
+                            hasHeating ? " (Heating)" :
+                            hasCooling ? " (Cooling)" : "";
+
+          const item = {
+            id: `csv:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+            source: 'csv',
+            isUpload: true,
+            title: `CSV: ${key}${roleBadge}`,
+            y_label: 'Value',
+            datasets
+          };
+
+          this.uploads.unshift(item);
+          created.push(item);
+        }
+
+        if (created.length) {
+          this.selectUpload(created[0]); // show most recent group
+          this.uploadHint = created.length > 1
+            ? `Uploaded ${created.length} grouped item(s).`
+            : `Upload complete.`;
+        } else {
+          this.uploadHint = 'No usable series found in the uploaded files.';
+        }
+      } catch (err) {
+        console.error(err);
+        this.error = err?.message || String(err);
+      } finally {
+        this.uploading = false;
+        e.target.value = ''; // allow re-upload of same files
+      }
     },
 
     selectUpload(item) {
