@@ -9,7 +9,7 @@ import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  LogarithmicScale,
+  LogarithmicScale,   //By Cha
   PointElement,
   LineElement,
   LineController,
@@ -143,7 +143,7 @@ export default {
           type: 'line',
           data: {
             datasets: this.chartData.datasets || []
-            const EPS = 1e-9;
+            const EPS = 1e-9;  //By Cha
             dataset.data = dataset.data.map(p => {
               if (typeof p === 'number') return p > 0 ? p : null; 
               return { x: p.x, y: p.y > 0 ? p.y : null} });
