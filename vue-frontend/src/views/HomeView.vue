@@ -26,6 +26,13 @@
           @change="handleCsvUpload"
           style="display:none"
         />
+        <!-- Data type selector -->
+        <select v-model="uploadDataType" style="margin-left:10px; padding:10px; border-radius:8px;">
+          <option value="resistance_temp">Resistance vs Temp</option>
+          <option value="transmittance_temp">Transmittance vs Temp</option>
+        </select>
+
+        
       </div>
       <div v-if="uploadHint" style="margin-top:8px; color:#e5e7eb;">{{ uploadHint }}</div>
     </div>
