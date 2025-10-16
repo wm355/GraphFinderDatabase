@@ -21,6 +21,7 @@ import {
 ChartJS.register(
   CategoryScale,
   LinearScale,
+  LogarithmicScale, //By Cha
   PointElement,
   LineElement,
   LineController,
