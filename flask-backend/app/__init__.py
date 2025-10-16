@@ -6,38 +6,61 @@ from flask_cors import CORS
 
 db = SQLAlchemy()
 
+def _normalize_db_url(url: str) -> str:
+    # Optional nicety: Heroku-style DATABASE_URL uses postgres://
+    # SQLAlchemy expects postgresql://
+    if url and url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql://", 1)
+    return url
+
 def create_app():
     app = Flask(__name__)
 
-    app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///app.db")
+    # --- Database config ---
+    raw_db_url = os.getenv("DATABASE_URL", "sqlite:///app.db")
+    app.config["SQLALCHEMY_DATABASE_URI"] = _normalize_db_url(raw_db_url)
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-    # 👇 Point this to your actual folder that contains the type/element subfolders
-    # Use relative path for production deployment
-    # default_data_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "input")
-    # app.config["DATA_ROOT"] = os.getenv("DATA_ROOT", default_data_root)
-
-    
+    # --- File storage roots ---
+    # We keep a single base (input/) and use it for BOTH reading (DATA_ROOT)
+    # and writing uploads (UPLOAD_ROOT). That way new uploads immediately
+    # appear to any code that scans input/.
     here = os.path.dirname(__file__)
-    default_upload_root = os.path.abspath(os.path.join(here, "..", "input"))
-    app.config.setdefault("UPLOAD_ROOT", default_upload_root)
-    os.makedirs(app.config["UPLOAD_ROOT"], exist_ok=True)
+    default_root = os.path.abspath(os.path.join(here, "..", "input"))
 
-   
+    # Allow override via env if you deploy somewhere else
+    data_root = os.getenv("DATA_ROOT", default_root)
+    app.config["DATA_ROOT"] = data_root
+    app.config["UPLOAD_ROOT"] = data_root  # keep them identical
+
+    # Ensure the folder structure exists
+    os.makedirs(app.config["DATA_ROOT"], exist_ok=True)
+    for sub in ("resistance_temp", "transmittance_temp"):
+        os.makedirs(os.path.join(app.config["DATA_ROOT"], sub), exist_ok=True)
+
+    # --- Extensions ---
     db.init_app(app)
-    # Allow GitHub Pages and localhost for development
+
+    # CORS (adjust as needed)
     cors_origins = [
         "http://localhost:5173",
         "http://localhost:8080",
-        "https://wm355.github.io"
+        "https://wm355.github.io",
     ]
     CORS(app, resources={r"/api/*": {"origins": cors_origins}})
 
-    from .routes import main as main_bp
-    app.register_blueprint(main_bp)
+    # --- Routes/Blueprints ---
+    # Make sure your blueprint in routes.py matches this import and has url_prefix="/api"
+    # e.g., in routes.py: bp = Blueprint("api", __name__)
+    from .routes import bp as api_bp
+    app.register_blueprint(api_bp, url_prefix="/api")
 
+    # --- DB create ---
     with app.app_context():
         db.create_all()
 
-    print("DATA_ROOT:", app.config["DATA_ROOT"])  # helpful log
+    # Helpful logs
+    print("SQLALCHEMY_DATABASE_URI:", app.config["SQLALCHEMY_DATABASE_URI"])
+    print("DATA_ROOT:", app.config["DATA_ROOT"])
+    print("UPLOAD_ROOT:", app.config["UPLOAD_ROOT"])
     return app
