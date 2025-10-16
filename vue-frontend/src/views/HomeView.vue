@@ -412,6 +412,7 @@ export default {
 
         if (created.length) {
           this.selectUpload(created[0]);
+          await this.searchDopants();
           this.uploadHint = created.length > 1
             ? `Uploaded ${created.length} grouped item(s). Saved to server by dopant folder.`
             : `Upload complete. Saved to server by dopant folder.`;
