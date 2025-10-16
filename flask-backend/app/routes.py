@@ -2,6 +2,10 @@
 from flask import Blueprint, jsonify, request, current_app, abort
 from pathlib import Path
 import traceback
+import re
+from datetime import datetime
+from .models import db, Upload
+
 
 from .files import (
     list_types, list_elements_for_type, list_files_for, read_timeseries,
@@ -9,6 +13,61 @@ from .files import (
 )
 
 main = Blueprint("main", __name__)
+
+@main.route("/upload_csv", methods=["POST"])
+def upload_csv():
+    """
+    Receives multipart/form-data:
+      - file: the CSV file
+      - dopant: e.g. "W", "Cr" (case-insensitive)
+      - role: "heating" | "cooling" | ""
+      - groupKey: pairing key from the frontend
+    Saves into <UPLOAD_ROOT>/<DOPANT>/timestamp__original.csv
+    """
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "No file"}), 400
+
+    dopant = (request.form.get("dopant") or "Unknown").strip()
+    role = (request.form.get("role") or "").strip()
+    group_key = (request.form.get("groupKey") or "").strip()
+
+    # Normalize dopant folder name
+    dopant_folder = dopant.upper() or "UNKNOWN"
+
+    # Ensure folder exists
+    root = current_app.config["UPLOAD_ROOT"]
+    save_dir = os.path.join(root, dopant_folder)
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Safe filename + timestamp
+    original = re.sub(r"[^\w.\- ]+", "_", f.filename or "upload.csv")
+    stamp = datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    final_name = f"{stamp}__{original}"
+    final_path = os.path.join(save_dir, final_name)
+
+    # Save file
+    f.save(final_path)
+
+    # Insert DB row
+    rec = Upload(
+        dopant=dopant,
+        role=role,
+        group_key=group_key,
+        filename=final_name,
+        filepath=final_path,
+    )
+    db.session.add(rec)
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "dopant": dopant,
+        "role": role,
+        "groupKey": group_key,
+        "savedAs": final_name,
+        "folder": save_dir,
+    })
 
 @main.route("/")
 def index():
