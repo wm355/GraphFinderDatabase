@@ -32,22 +32,22 @@ def upload_csv():
     role = (request.form.get("role") or "").strip()
     group_key = (request.form.get("groupKey") or "").strip()
 
+    data_type = (request.form.get("data_type") or "resistance_temp").strip().lower()
+    if data_type not in {"resistance_temp", "transmittance_temp"}:
+        return jsonify({"error": "Invalid data_type"}), 400
+
     if not dopant:
-      m = (f.filename or "").strip()
-      m = re.match(r"^([A-Za-z]+)_(\d+(?:\.\d+)?)(?:_|\.)", m)
-      if m:
-        dopant = m.group(1).upper()
-      else:
-        dopant = "UNKNOWN"
+        m = re.match(r"^([A-Za-z]+)_(\d+(?:\.\d+)?)(?:_|\.)", (f.filename or ""))
+        dopant = m.group(1).upper() if m else "UNKNOWN"
 
-    
-    # Normalize dopant folder name
-    dopant_folder = dopant.upper() or "UNKNOWN"
+    # Normalize dopant folder like your tree: "B", "Cr", "Fe", ...
+    dopant_folder = dopant[:1].upper() + dopant[1:].lower() if dopant else "Unknown"
 
-    # Ensure folder exists
-    root = current_app.config["UPLOAD_ROOT"]
-    save_dir = os.path.join(root, dopant_folder)
+    # Build save path: input/<data_type>/<DOPANT>/
+    root = current_app.config["UPLOAD_ROOT"]  # points to input/
+    save_dir = os.path.join(root, data_type, dopant_folder)
     os.makedirs(save_dir, exist_ok=True)
+
 
     # Safe filename + timestamp
     original = re.sub(r"[^\w.\- ]+", "_", f.filename or "upload.csv")
@@ -63,6 +63,7 @@ def upload_csv():
         dopant=dopant,
         role=role,
         group_key=group_key,
+        data_type=data_type,
         filename=final_name,
         filepath=final_path,
     )
@@ -74,6 +75,7 @@ def upload_csv():
         "dopant": dopant,
         "role": role,
         "groupKey": group_key,
+        "data_type": data_type,
         "savedAs": final_name,
         "folder": save_dir,
     })
