@@ -1,5 +1,6 @@
 # app/routes.py
 from flask import Blueprint, jsonify, request, current_app, abort
+import os
 from pathlib import Path
 import traceback
 import re
@@ -14,7 +15,9 @@ from .files import (
 
 main = Blueprint("main", __name__)
 
-@main.route("/upload_csv", methods=["POST"])
+main.route("/upload_csv", methods=["POST"])
+@main.route("/api/upload_csv", methods=["POST"])
+
 def upload_csv():
     """
     Receives multipart/form-data:
