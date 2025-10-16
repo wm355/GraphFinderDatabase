@@ -19,14 +19,11 @@ def create_app():
 
     
     here = os.path.dirname(__file__)
-    default_upload_root = os.path.abspath(os.path.join(here, "..", "input", "dopants"))
+    default_upload_root = os.path.abspath(os.path.join(here, "..", "input"))
     app.config.setdefault("UPLOAD_ROOT", default_upload_root)
-
     os.makedirs(app.config["UPLOAD_ROOT"], exist_ok=True)
 
-
-
-    
+   
     db.init_app(app)
     # Allow GitHub Pages and localhost for development
     cors_origins = [
