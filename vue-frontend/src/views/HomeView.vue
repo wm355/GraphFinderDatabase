@@ -187,6 +187,7 @@ export default {
       uploads: [],        // [{ id, title, y_label, datasets, isUpload:true }]
       uploading: false,
       uploadHint: "You can upload one or multiple (heating/cooling) CSV file(s) with temperature and series columns",
+      uploadDataType: "resistance_temp",
 
       // series browsing
       chosenElement: "",
@@ -292,6 +293,7 @@ export default {
       form.append("dopant", dopant);
       form.append("role", role || "");
       form.append("groupKey", groupKey || "");
+      form.append("data_type", this.uploadDataType); 
       try {
         await api.post("/upload_csv", form, {
           headers: { "Content-Type": "multipart/form-data" },
