@@ -219,7 +219,23 @@ export default {
       if (/(^|[_\-\s])(cooling|cool)([_\-\s]|\.|$)/.test(n)) return "cooling";
       return null;
     },
+
+    // Parse dopant + concentration from "<dopant>_<conc>_<role>.csv"
+    parseNameParts(name) {
+      const m = (name || "").match(/^([A-Za-z]+)_(\d+(?:\.\d+)?)(?:_|\.)/);
+      if (!m) return { dopant: "Unknown", concentration: "" };
+      const dopant = m[1].toUpperCase();                 // "Y"
+      const concentration = m[2];                        // "0" or "2.5"
+      return { dopant, concentration };
+    },
+
+    // Use "<dopant>_<conc>" as the group key so heating/cooling pair together
     groupKeyFromName(name) {
+      const { dopant, concentration } = this.parseNameParts(name);
+      if (dopant !== "Unknown" && concentration) {
+        return `${dopant.toLowerCase()}_${concentration}`;
+      }
+      // fallback: strip role pieces
       return (name || "")
         .toLowerCase()
         .replace(/\.(csv)$/, "")
@@ -227,9 +243,11 @@ export default {
         .replace(/[_\-\s]+$/, "")
         .trim();
     },
+
     roleColor(role) {
-      return role === "heating" ? "#ef4444" : "#3b82f6"; // red / blue
+      return role === "heating" ? "#ef4444" : "#3b82f6";
     },
+
     parseCsvFile(file) {
       return new Promise((resolve, reject) => {
         Papa.parse(file, {
@@ -245,20 +263,21 @@ export default {
 
     // NEW: try to infer dopant name from filename or CSV rows
     extractDopant(fileName, rows) {
-      // 1) Look for dopant column in CSV (Dopant/dopant)
+      const { dopant } = this.parseNameParts(fileName);
+      if (dopant !== "Unknown") return dopant;
       const first = rows?.[0] || {};
-      const dopantFromCol = first.Dopant || first.dopant || first.dopants || first.DOPANT;
-      if (dopantFromCol && String(dopantFromCol).trim()) {
-        return String(dopantFromCol).trim();
-      }
-      // 2) Infer from filename: take the first token (letters+digits) before separators
-      const base = (fileName || "").replace(/\.(csv)$/i, "");
-      const clean = base
-        .replace(/[_\-\s]?(heating|heat|cooling|cool)\b/i, "")
-        .trim();
-      const m = clean.match(/^[A-Za-z][A-Za-z0-9]*/);
-      return m ? m[0] : "Unknown";
+      const fromCol = first.Dopant || first.dopant || first.dopants || first.DOPANT;
+      return (fromCol && String(fromCol).trim()) ? String(fromCol).trim() : "Unknown";
     },
+
+    extractConcentration(fileName, rows) {
+      const { concentration } = this.parseNameParts(fileName);
+      if (concentration) return concentration;
+      const first = rows?.[0] || {};
+      const fromCol = first.Concentration || first.concentration || first.CONCENTRATION;
+      return (fromCol == null ? "" : String(fromCol));
+    },
+
     // NEW: POST a single file to server to persist in dopant folder + DB
     async uploadToServer(file, { dopant, role, groupKey }) {
       const form = new FormData();
@@ -272,7 +291,6 @@ export default {
         });
       } catch (err) {
         console.error("Upload save failed:", err?.response?.data || err);
-        // Don't hard-fail the UX; just surface a hint.
         this.uploadHint = "Stored locally; server save failed for some files.";
       }
     },
@@ -327,12 +345,14 @@ export default {
         const parsed = await Promise.all(files.map(this.parseCsvFile));
 
         // Group by base key (filename minus heating/cooling + ext)
-        const byGroup = new Map(); // key -> { items: [{file, rows, role}] }
+        const byGroup = new Map();
         for (const { file, rows } of parsed) {
           const role = this.detectRoleFromName(file.name);
           const key  = this.groupKeyFromName(file.name) || file.name.toLowerCase().replace(/\.(csv)$/,'');
-          if (!byGroup.has(key)) byGroup.set(key, { items: [] });
-          byGroup.get(key).items.push({ file, rows, role });
+          const dopant = this.extractDopant(file.name, rows);
+          const conc = this.extractConcentration(file.name, rows);
+          if (!byGroup.has(key)) byGroup.set(key, { items: [], dopant, conc, key });
+          byGroup.get(key).items.push({ file, rows, role, dopant, conc, key });
         }
 
         // Persist each raw file to server (folder per dopant) in parallel
@@ -361,6 +381,7 @@ export default {
           if (!datasets.length) continue;
 
           const dopant = group.items[0]?.dopant || "Unknown";
+          const conc = group.conc ? `${group.conc}%` : "";
           const hasHeating = group.items.some(i => i.role === 'heating');
           const hasCooling = group.items.some(i => i.role === 'cooling');
           const roleBadge = hasHeating && hasCooling ? " (Heating + Cooling)" :
@@ -371,7 +392,7 @@ export default {
             id: `csv:${Date.now()}:${Math.random().toString(36).slice(2)}`,
             source: 'csv',
             isUpload: true,
-            title: `CSV: ${dopant} — ${key}${roleBadge}`,
+            title: `CSV: ${dopant}${conc ? " " + conc : ""} — ${key}${roleBadge}`,
             y_label: 'Value',
             datasets
           };
