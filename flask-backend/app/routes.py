@@ -28,10 +28,19 @@ def upload_csv():
     if not f:
         return jsonify({"error": "No file"}), 400
 
-    dopant = (request.form.get("dopant") or "Unknown").strip()
+    dopant = (request.form.get("dopant") or "").strip()
     role = (request.form.get("role") or "").strip()
     group_key = (request.form.get("groupKey") or "").strip()
 
+    if not dopant:
+      m = (f.filename or "").strip()
+      m = re.match(r"^([A-Za-z]+)_(\d+(?:\.\d+)?)(?:_|\.)", m)
+      if m:
+        dopant = m.group(1).upper()
+      else:
+        dopant = "UNKNOWN"
+
+    
     # Normalize dopant folder name
     dopant_folder = dopant.upper() or "UNKNOWN"
 
