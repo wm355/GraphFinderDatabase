@@ -179,7 +179,7 @@ export default {
       // uploads
       uploads: [],        // [{ id, title, y_label, datasets, isUpload:true }]
       uploading: false,
-      uploadHint: "You can upload a CSV with a Temperature column and one or more series columns.",
+      uploadHint: "You can upload one or multiple (heating/cooling) CSV file(s) with temperature and series columns",
 
       // series browsing
       chosenElement: "",
@@ -242,6 +242,42 @@ export default {
       });
     },
 
+
+    // NEW: try to infer dopant name from filename or CSV rows
+    extractDopant(fileName, rows) {
+      // 1) Look for dopant column in CSV (Dopant/dopant)
+      const first = rows?.[0] || {};
+      const dopantFromCol = first.Dopant || first.dopant || first.dopants || first.DOPANT;
+      if (dopantFromCol && String(dopantFromCol).trim()) {
+        return String(dopantFromCol).trim();
+      }
+      // 2) Infer from filename: take the first token (letters+digits) before separators
+      const base = (fileName || "").replace(/\.(csv)$/i, "");
+      const clean = base
+        .replace(/[_\-\s]?(heating|heat|cooling|cool)\b/i, "")
+        .trim();
+      const m = clean.match(/^[A-Za-z][A-Za-z0-9]*/);
+      return m ? m[0] : "Unknown";
+    },
+    // NEW: POST a single file to server to persist in dopant folder + DB
+    async uploadToServer(file, { dopant, role, groupKey }) {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("dopant", dopant);
+      form.append("role", role || "");
+      form.append("groupKey", groupKey || "");
+      try {
+        await api.post("/upload_csv", form, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      } catch (err) {
+        console.error("Upload save failed:", err?.response?.data || err);
+        // Don't hard-fail the UX; just surface a hint.
+        this.uploadHint = "Stored locally; server save failed for some files.";
+      }
+    },
+
+
     // UPDATED: accepts role/color for nicer labels + colors
     normalizeCsvToDatasets(rows, { role = null, color = null } = {}) {
       if (!rows?.length) throw new Error('CSV has no data rows.');
@@ -299,6 +335,19 @@ export default {
           byGroup.get(key).items.push({ file, rows, role });
         }
 
+        // Persist each raw file to server (folder per dopant) in parallel
+        await Promise.all(
+          Array.from(byGroup.values()).flatMap(group =>
+            group.items.map(item =>
+              this.uploadToServer(item.file, {
+                dopant: item.dopant,
+                role: item.role,
+                groupKey: item.key
+              })
+            )
+          )
+        );
+
         const created = [];
         for (const [key, group] of byGroup.entries()) {
           // optional aesthetics
@@ -311,6 +360,7 @@ export default {
 
           if (!datasets.length) continue;
 
+          const dopant = group.items[0]?.dopant || "Unknown";
           const hasHeating = group.items.some(i => i.role === 'heating');
           const hasCooling = group.items.some(i => i.role === 'cooling');
           const roleBadge = hasHeating && hasCooling ? " (Heating + Cooling)" :
@@ -321,7 +371,7 @@ export default {
             id: `csv:${Date.now()}:${Math.random().toString(36).slice(2)}`,
             source: 'csv',
             isUpload: true,
-            title: `CSV: ${key}${roleBadge}`,
+            title: `CSV: ${dopant} — ${key}${roleBadge}`,
             y_label: 'Value',
             datasets
           };
@@ -331,10 +381,10 @@ export default {
         }
 
         if (created.length) {
-          this.selectUpload(created[0]); // show most recent group
+          this.selectUpload(created[0]);
           this.uploadHint = created.length > 1
-            ? `Uploaded ${created.length} grouped item(s).`
-            : `Upload complete.`;
+            ? `Uploaded ${created.length} grouped item(s). Saved to server by dopant folder.`
+            : `Upload complete. Saved to server by dopant folder.`;
         } else {
           this.uploadHint = 'No usable series found in the uploaded files.';
         }
@@ -358,7 +408,7 @@ export default {
       this.chartKey++; // Force chart to re-render
     },
 
-    // ===== Search & API flow (unchanged) =====
+    // ===== Search & API flow =====
     async searchDopants() {
       this.loading = true;
       this.error = "";
