@@ -13,14 +13,33 @@
         <button type="button" @click="searchDopants" :disabled="loading">
           {{ loading ? 'Searching...' : 'Search' }}
         </button>
+
+        <!-- Upload CSV controls -->
+        <button type="button" @click="triggerUpload" :disabled="uploading" style="margin-left:10px;">
+          {{ uploading ? 'Uploading…' : 'Upload CSV' }}
+        </button>
+        <input
+          ref="csvInput"
+          type="file"
+          accept=".csv"
+          @change="handleCsvUpload"
+          style="display:none"
+        />
       </div>
+      <div v-if="uploadHint" style="margin-top:8px; color:#e5e7eb;">{{ uploadHint }}</div>
     </div>
 
     <div class="databox">
       <div class="datadisplaybox">
         <div class="datatitlepanel">
           <h2 v-if="selectedSeries">
-            {{ selectedSeries.element + ' ' + selectedSeries.concentration + '% doped : ' + prettyType(selectedSeries.type) }}
+            <!-- If an uploaded CSV is selected, show a friendly header -->
+            <template v-if="selectedSeries.isUpload">
+              {{ selectedSeries.title }} : Uploaded Data
+            </template>
+            <template v-else>
+              {{ selectedSeries.element + ' ' + selectedSeries.concentration + '% doped : ' + prettyType(selectedSeries.type) }}
+            </template>
           </h2>
           <h2 v-else>Select a dataset below. Graphical data will be displayed here</h2>
 
@@ -38,8 +57,35 @@
         <div class="datapanel">
           <h1>Results</h1>
           <div v-if="error" style="padding: 16px; color: #ff6b6b">{{ error }}</div>
-          
-          <!-- Search results -->
+
+          <!-- ===== Uploaded CSVs (appear at top) ===== -->
+          <div v-if="uploads.length" style="margin-bottom: 10px;">
+            <div style="opacity:0.85; font-size:0.95rem; margin-bottom:6px;">
+              Uploaded files
+            </div>
+            <ul style="list-style:none; padding:0; margin:0;">
+              <li
+                v-for="u in uploads"
+                :key="u.id"
+                style="padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.08);"
+              >
+                <button
+                  class="upload-row"
+                  @click="selectUpload(u)"
+                  title="View uploaded CSV in chart"
+                  style="width:100%; text-align:left; background:transparent; border:1px solid rgba(255,255,255,0.2); border-radius:10px; padding:10px 12px; cursor:pointer;"
+                >
+                  <strong>{{ u.title }}</strong>
+                  <span class="badge" style="margin-left:8px; font-size:12px; opacity:0.9;">Uploaded</span>
+                  <div style="opacity:0.8; font-size:0.85rem; margin-top:4px;">
+                    y: {{ u.y_label }} • series: {{ u.datasets.length }}
+                  </div>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <!-- ===== Search results from API ===== -->
           <div v-if="results.length">
             <ul style="list-style: none; padding: 0; margin: 0;">
               <li
@@ -112,15 +158,15 @@
 
 <script>
 import axios from "axios";
+import Papa from "papaparse";
 import TemperatureChart from '../components/TemperatureChart.vue';
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "/api"
 });
 
 export default {
-  components: {
-    TemperatureChart
-  },
+  components: { TemperatureChart },
   data() {
     return {
       // search
@@ -129,13 +175,18 @@ export default {
       error: "",
       loading: false,
 
+      // uploads
+      uploads: [],        // [{ id, title, y_label, datasets, isUpload:true }]
+      uploading: false,
+      uploadHint: "You can upload a CSV with a Temperature column and one or more series columns.",
+
       // series browsing
       chosenElement: "",
       chosenType: "",
-      expandedKey: "",    // key is {element,type} 
+      expandedKey: "",    // key is {element,type}
       loadingSeriesKey: "",
       series: [],         // [{ concentration, heating_file, cooling_file, has_both, y_label, sample_points?, error? }]
-      selectedSeries: null, // series is {element, type, concentration}
+      selectedSeries: null, // {element, type, concentration} OR {isUpload:true, title}
 
       // chart data
       chartData: null,
@@ -145,41 +196,132 @@ export default {
     };
   },
   mounted() {
-    // Can implement this later: load all dopants initially (currently empty)
     this.searchDopants();
   },
   methods: {
     prettyType(t) {
-      // Convert file text "resistance_temp" to prettier "Resistance Temperature Data"
+      if (t === 'upload') return 'Uploaded';
       return t.replace(/_/g, " ").split(" ").map(word =>
         word.charAt(0).toUpperCase() + word.slice(1)
       ).join(" ") + " Data";
     },
+
+    // ===== Upload CSV flow =====
+    triggerUpload() {
+      this.$refs.csvInput?.click();
+    },
+
+    handleCsvUpload(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      this.uploading = true;
+      this.uploadHint = "";
+
+      Papa.parse(file, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        complete: ({ data }) => {
+          try {
+            const datasets = this.normalizeCsvToDatasets(data);
+
+            const item = {
+              id: `csv:${Date.now()}`,
+              source: 'csv',
+              isUpload: true,
+              title: `CSV: ${file.name}`,
+              y_label: 'Value',
+              datasets
+            };
+            // newest on top
+            this.uploads.unshift(item);
+
+            // show immediately in chart
+            this.selectUpload(item);
+          } catch (err) {
+            this.error = err?.message || String(err);
+          } finally {
+            this.uploading = false;
+            this.uploadHint = this.uploadHint || 'Upload complete.';
+            e.target.value = ''; // allow re-upload of same file
+          }
+        },
+        error: (err) => {
+          this.uploading = false;
+          this.error = `CSV parse error: ${err.message || err}`;
+          e.target.value = '';
+        }
+      });
+    },
+
+    normalizeCsvToDatasets(rows) {
+      if (!rows?.length) throw new Error('CSV has no data rows.');
+
+      const keys = Object.keys(rows[0] || {});
+      const xKey = keys.find(k => ['temperature','temp','t','x'].includes(k.toLowerCase()));
+      if (!xKey) throw new Error('CSV must contain a Temperature / Temp / T / X column.');
+
+      const yCols = keys.filter(k => k !== xKey);
+      if (!yCols.length) throw new Error('CSV must contain at least one Y series column.');
+
+      // Return Chart.js datasets; skip y<=0 for logarithmic scale
+      return yCols.map(col => {
+        const data = rows.map(r => {
+          const x = Number(r[xKey]);
+          const y = Number(r[col]);
+          if (!isFinite(x) || !isFinite(y) || y <= 0) return null;
+          return { x, y };
+        }).filter(Boolean);
+
+        return {
+          label: col,
+          data,
+          borderWidth: 2,
+          fill: false
+        };
+      });
+    },
+
+    selectUpload(item) {
+      this.selectedSeries = { isUpload: true, title: item.title, type: 'upload' };
+      this.chartData = {
+        datasets: item.datasets,
+        element: item.title,
+        concentration: '',
+        y_label: item.y_label || 'Value'
+      };
+      this.chartKey++; // Force chart to re-render
+    },
+
+    // ===== Search & API flow (unchanged) =====
     async searchDopants() {
       this.loading = true;
       this.error = "";
       this.results = [];
       this.expandedKey = "";
       this.series = [];
+      // keep uploaded items
       this.selectedSeries = null;
+      this.chartData = null;
+
       try {
         const { data } = await api.get("/search_dopants", { params: { q: this.searchTerm }});
         if (Array.isArray(data)) {
           this.results = data;
         } else if (data && data.error) {
-          this.error = data.error; // if data returns error, show this in the backend console
+          this.error = data.error;
         } else {
           this.results = [];
         }
       } catch (e) {
         console.error(e);
-        // surface HTTP payload if present
         const msg = e?.response?.data?.error || e?.message || "Error searching dopants.";
         this.error = msg;
       } finally {
         this.loading = false;
       }
     },
+
     async loadSeries(element, type) {
       this.error = "";
       this.series = [];
@@ -197,17 +339,13 @@ export default {
         this.loadingSeriesKey = "";
       }
     },
-    async loadChart(element, type, concentration) {
-      // Prevents multiple calls for the same data
-      const newKey = `${element}|${type}|${concentration}`;
 
-      // If this exact chart is already displayed, ignore the request
+    async loadChart(element, type, concentration) {
+      const newKey = `${element}|${type}|${concentration}`;
       if (this.currentChartKey === newKey) {
         console.log("Chart already displayed, ignoring duplicate request");
         return;
       }
-
-      // If loading a different chart, let it proceed (cancels previous animation)
       if (this.loadingChart) {
         console.log("New chart requested while loading, will cancel previous animation");
       }
@@ -222,9 +360,7 @@ export default {
           params: { type, element, concentration }
         });
 
-        // Convert API data to Chart.js format
         const datasets = [];
-
         data.curves.forEach(curve => {
           if (curve.data && !curve.error) {
             datasets.push({
@@ -234,7 +370,7 @@ export default {
                 y: point.value
               })),
               borderColor: curve.color,
-              backgroundColor: curve.color + '20', // some transparency
+              backgroundColor: curve.color + '20',
               fill: false,
               tension: 0.1,
               pointRadius: 2,
@@ -250,9 +386,7 @@ export default {
           y_label: data.y_label
         };
 
-        console.log("Chart data set:", this.chartData); // Debug chart data set
         this.chartKey++; // Force chart to re-render
-
       } catch (e) {
         console.error(e);
         this.error = "Failed to load chart data.";
@@ -273,4 +407,5 @@ button { background-color:#26a69a; padding: 12px 20px; -webkit-text-fill-color: 
 .datadisplaybox { width: 1000px; display: flex; flex-direction: column; align-items: stretch; }
 .datatitlepanel { min-height:100px; background-color: #2D2F35; border-radius: 25px; width: 100%; color: whitesmoke; margin-bottom:10px; padding: 15px 30px; }
 .datapanel { min-height: 200px; background-color: #2D2F35; border-radius: 25px; width: 100%; color: whitesmoke; padding: 16px 0 32px; padding: 15px 30px; }
+.badge { background: rgba(255,255,255,0.12); padding: 2px 8px; border-radius: 999px; }
 </style>
